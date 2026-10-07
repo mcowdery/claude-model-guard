@@ -22,6 +22,18 @@ const BLOCK_CONFIDENCE = 0.65;
 // a separate terminal/env var mid-flow.
 const SKIP_PHRASE = /\[\[skip-guard\]\]/i;
 
+// Background-task completions arrive as a synthetic prompt wrapped in <task-notification>, and
+// bare "continue"-style replies just resume work already underway. Neither is a new task, so
+// scoring them would block a task that is mid-flight on a model that was right when it started.
+const TASK_NOTIFICATION = /<task-notification>[\s\S]*?<\/task-notification>/gi;
+const CONTINUATION = /^(continue|go on|go ahead|keep going|proceed|resume|ok(ay)?|yes|yep|y|next|carry on)[\s.!]*$/i;
+
+// The part of the prompt worth scoring, or '' if it's only notifications / a bare continuation.
+function scorablePrompt(prompt) {
+  const text = prompt.replace(TASK_NOTIFICATION, '').trim();
+  return CONTINUATION.test(text) ? '' : text;
+}
+
 function readStdin() {
   return new Promise((resolve) => {
     let data = '';
@@ -40,9 +52,11 @@ async function main() {
     return; // Not valid JSON input - say nothing, let the prompt through untouched.
   }
 
-  const prompt = input?.prompt;
-  if (!prompt || !prompt.trim()) return;
-  if (process.env.CLAUDE_SKIP_MODEL_GUARD || SKIP_PHRASE.test(prompt)) return;
+  const raw = input?.prompt;
+  if (!raw || !raw.trim()) return;
+  if (process.env.CLAUDE_SKIP_MODEL_GUARD || SKIP_PHRASE.test(raw)) return;
+  const prompt = scorablePrompt(raw);
+  if (!prompt) return;
 
   const answer = await pickTier(prompt, { timeoutMs: TIMEOUT_MS });
   const currentTier = readCurrentTier(input);
