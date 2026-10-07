@@ -5,7 +5,8 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "model:pick": "node scripts/pickModel.mjs"
+    "model:pick": "node scripts/pickModel.mjs",
+    "test": "node --test \"test/*.test.mjs\""
   },
   "engines": {
     "node": ">=18"

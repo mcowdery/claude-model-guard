@@ -1,38 +1,29 @@
 // UserPromptSubmit hook: on every prompt, asks Jev which model tier fits it.
 //
-// - If the session's current model is known (recordModelSwitch.mjs has seen a PostModelSwitch
-//   or SessionStart) and it confidently disagrees with Jev's pick, this BLOCKS the prompt with
-//   a reason, so it never runs on the wrong model - resubmit after switching.
+// - If the session's current model is known (from the transcript or recordModelSwitch.mjs) and
+//   Jev confidently says a MORE capable tier is needed, this BLOCKS the prompt with a reason, so
+//   it never runs on an under-powered model - resubmit after switching.
 // - If the two already agree, it says nothing.
-// - If the current model isn't known yet (fresh session, no switch seen), or the mismatch is
-//   too close to call, it only adds advisory context for Claude to mention if relevant.
+// - Downgrades, unranked tiers (fable), unknown current model, or a mismatch too close to call
+//   only add advisory context for Claude to mention if relevant.
+// - Notifications, slash commands, bare "continue" replies are never scored (promptFilter.mjs).
 //
 // Must never block or slow down a prompt on its own account: any failure (no API key, network
 // error, Jev slow, state file unreadable) is swallowed and the hook exits 0 with no output,
 // exactly as if it weren't installed. Set CLAUDE_SKIP_MODEL_GUARD=1, or put [[skip-guard]]
 // anywhere in the prompt, to bypass for one prompt.
+import fs from 'node:fs';
 import { pickTier, rankedProbabilities } from './jev.mjs';
-import { readCurrentTier } from './modelState.mjs';
+import { bumpPromptCount, resolveCurrent } from './modelState.mjs';
+import { classifyPrompt } from './promptFilter.mjs';
+import { decide } from './decision.mjs';
+import { logDecision } from './decisionLog.mjs';
 
 const TIMEOUT_MS = 2500;
-// Only hard-block when Jev is this confident; a near-coin-flip mismatch just gets a soft nudge.
-const BLOCK_CONFIDENCE = 0.65;
 // Typed into the prompt itself to skip the guard for just that one prompt - stays in the
 // transcript (hooks can't rewrite the prompt text), but that's a small price for not needing
 // a separate terminal/env var mid-flow.
 const SKIP_PHRASE = /\[\[skip-guard\]\]/i;
-
-// Background-task completions arrive as a synthetic prompt wrapped in <task-notification>, and
-// bare "continue"-style replies just resume work already underway. Neither is a new task, so
-// scoring them would block a task that is mid-flight on a model that was right when it started.
-const TASK_NOTIFICATION = /<task-notification>[\s\S]*?<\/task-notification>/gi;
-const CONTINUATION = /^(continue|go on|go ahead|keep going|proceed|resume|ok(ay)?|yes|yep|y|next|carry on)[\s.!]*$/i;
-
-// The part of the prompt worth scoring, or '' if it's only notifications / a bare continuation.
-function scorablePrompt(prompt) {
-  const text = prompt.replace(TASK_NOTIFICATION, '').trim();
-  return CONTINUATION.test(text) ? '' : text;
-}
 
 function readStdin() {
   return new Promise((resolve) => {
@@ -42,6 +33,18 @@ function readStdin() {
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', () => resolve(data));
   });
+}
+
+// .env.jev and jev.config.json are looked up relative to the working directory, so point it at
+// the project even when this script is installed once, globally, outside the project.
+function enterProjectDir(input) {
+  const dir = process.env.CLAUDE_PROJECT_DIR || input?.cwd;
+  try {
+    if (dir && fs.existsSync(dir)) process.chdir(dir);
+  } catch {
+    // Stay where we are.
+  }
+  return dir;
 }
 
 async function main() {
@@ -55,33 +58,59 @@ async function main() {
   const raw = input?.prompt;
   if (!raw || !raw.trim()) return;
   if (process.env.CLAUDE_SKIP_MODEL_GUARD || SKIP_PHRASE.test(raw)) return;
-  const prompt = scorablePrompt(raw);
-  if (!prompt) return;
+  const projectDir = enterProjectDir(input);
+  const log = (record) => logDecision(projectDir, { session: input.session_id, prompt: raw, ...record });
 
-  const answer = await pickTier(prompt, { timeoutMs: TIMEOUT_MS });
-  const currentTier = readCurrentTier(input);
+  const filtered = classifyPrompt(raw);
+  if (filtered.skip) return log({ action: 'skip', reason: filtered.reason });
+
+  const current = resolveCurrent(input);
+  // A short follow-up ("fix that too") says nothing about difficulty on its own, so score it
+  // together with what Claude just said - or skip it if there's nothing to go on.
+  let state = filtered.text;
+  if (filtered.needsContext) {
+    if (!current.lastText) return log({ action: 'skip', reason: 'short-no-context' });
+    state = `Previous assistant message (excerpt):\n${current.lastText}\n\nUser's reply:\n${filtered.text}`;
+  }
+
+  const answer = await pickTier(state, { timeoutMs: TIMEOUT_MS });
   const pct = Math.round(answer.confidence * 100);
   const ranked = rankedProbabilities(answer);
 
-  if (currentTier && currentTier === answer.choice) {
-    return; // Confirmed match - stay quiet, no need to say so every time.
-  }
+  const verdict = decide({
+    currentTier: current.tier,
+    choice: answer.choice,
+    confidence: answer.confidence,
+    promptsSinceSwitch: current.promptsSinceSwitch,
+  }, { blockDowngrades: process.env.CLAUDE_GUARD_BLOCK_DOWNGRADES === '1' });
 
-  if (currentTier && answer.confidence >= BLOCK_CONFIDENCE) {
+  bumpPromptCount(input);
+  log({
+    action: verdict.action,
+    kind: verdict.kind,
+    choice: answer.choice,
+    confidence: Number(answer.confidence.toFixed(3)),
+    currentTier: current.tier,
+    sinceSwitch: current.promptsSinceSwitch,
+  });
+
+  if (verdict.action === 'none') return; // Confirmed match - stay quiet.
+
+  if (verdict.action === 'block') {
     process.stdout.write(
       JSON.stringify({
         decision: 'block',
         reason:
-          `Jev suggests this prompt fits ${answer.choice} (confidence ${pct}%; ${ranked}), but ` +
-          `the session is running ${currentTier}. Switch models (the panel dropdown, or ` +
+          `Jev suggests this prompt needs ${answer.choice} (confidence ${pct}%; ${ranked}), but ` +
+          `the session is running ${current.tier}. Switch models (the panel dropdown, or ` +
           `/model ${answer.choice}) and resubmit, or set CLAUDE_SKIP_MODEL_GUARD=1 to bypass once.`,
       }),
     );
     return;
   }
 
-  // Current tier unknown (no switch seen yet this session), or a mismatch too uncertain to
-  // block on: fall back to the advisory nudge, which leans on Claude's own self-knowledge.
+  // Current tier unknown, a downgrade, an unranked tier, or a mismatch too uncertain to block
+  // on: fall back to the advisory nudge, which leans on Claude's own self-knowledge.
   const context =
     `Jev model-tier suggestion for this prompt: ${answer.choice} (confidence ${pct}%; ${ranked}). ` +
     'If this tier clearly differs from the model you are currently running as, say so to the ' +

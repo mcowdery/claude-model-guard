@@ -16,12 +16,24 @@ Three Claude Code hooks, working together:
 - **`SessionStart` / `PostModelSwitch`** → record which model the session is actually running
   right now (a tiny state file, nothing fancy).
 - **`UserPromptSubmit`** → on every prompt, asks Jev which tier fits it, compares that to the
-  recorded model, and:
+  running model, and:
   - **matches** → says nothing.
-  - **confidently disagrees** → **blocks the prompt** with a reason, so it never runs on the
-    wrong model. Switch models and resubmit.
-  - **current model unknown yet, or the mismatch is too close to call** → doesn't block, just
-    hands Claude a short note it can mention to you if relevant.
+  - **Jev confidently wants a more capable tier** (haiku → sonnet → opus) → **blocks the
+    prompt** with a reason, so it never runs on an under-powered model. Switch and resubmit.
+  - **anything else** (a downgrade, fable, current model unknown, a close call) → doesn't
+    block, just hands Claude a short note it can mention to you if relevant. Running a bigger
+    model than needed only costs money; set `CLAUDE_GUARD_BLOCK_DOWNGRADES=1` to block those too.
+
+What it deliberately does **not** score: background-task completion notifications, slash
+commands (`/model`, `/clear`, ...), `!` shell commands, and bare replies like "continue" or
+"yes" — these carry on work already underway, and scoring them blocked tasks mid-flight. Very
+short follow-ups ("fix that too") are scored together with Claude's previous message, or skipped
+if there isn't one. Long prompts are clipped and pasted blobs shrunk so logs don't drown the ask.
+
+The running model is read from the session transcript (every assistant message records its
+model) and the switch-tracking state file, whichever is newer. For the first few prompts after
+you switch models the block threshold is raised (0.9 instead of 0.65) so a switch isn't
+immediately second-guessed.
 
 There's also a small interactive CLI (`pickModel.mjs`) for picking a model tier *before* you
 start a session, independent of the hooks.
@@ -36,21 +48,28 @@ directory, and Node.js 18+ (for the global `fetch`).
 
 ## Install
 
-Clone this repo, or just copy the `scripts/` folder into your project:
+Clone this repo **once**; every project points at that one checkout, so a `git pull` updates
+them all (no per-project copies to drift out of date):
 
 ```sh
 git clone https://github.com/mcowdery/claude-model-guard.git
-cp -r claude-model-guard/scripts your-project/scripts/model-guard
+node claude-model-guard/scripts/install.mjs --project path/to/your-project   # personal settings.local.json
+node claude-model-guard/scripts/install.mjs --global                          # or: every project
 ```
+
+`install.mjs` is idempotent, keeps your other hooks, and supports `--shared` (use the
+project's `settings.json`), `--uninstall` and `--dry-run`. Don't combine `--global` with a
+project install, or the hooks run twice. Your project still supplies its own `.env.jev` and
+`jev.config.json`; they're looked up in the project directory, not in the clone.
 
 Then, in your project:
 
 1. **Add your API key.** Copy `.env.jev.example` to `.env.jev` at your project's root and fill
    in `TYPESAFE_API_KEY`. `.env.jev` is meant to be git-ignored — don't commit it.
 
-2. **Register the hooks.** Add this to `.claude/settings.json` (shared with your team) or
-   `.claude/settings.local.json` (personal, git-ignored — recommended while you're still
-   deciding whether you like this) — adjust the path if you copied `scripts/` somewhere else:
+2. **Register the hooks** — `install.mjs` above does this. To do it by hand instead, add this
+   to `.claude/settings.json` (shared with your team) or `.claude/settings.local.json`
+   (personal, git-ignored) after copying `scripts/` into your project:
 
    ```json
    {
@@ -99,20 +118,25 @@ If the guard ever blocks something you want to run anyway:
 
 ## Tuning
 
-- `BLOCK_CONFIDENCE` in `promptAdvisor.mjs` (default `0.65`) controls how confident Jev has to
-  be before a mismatch becomes a hard block instead of a soft nudge. Lower it to block more
-  readily; raise it to only ever block on near-certain calls.
+- Every decision (including skips) is appended to `.claude/model-guard.log.jsonl` in the
+  project: when, the first 120 chars of the prompt, Jev's pick and confidence, the running tier,
+  and what the hook did. Add it to your `.gitignore` (it contains prompt text), and review it
+  before changing thresholds. Set `CLAUDE_GUARD_LOG=0` to turn it off.
+- `DEFAULTS` in `scripts/decision.mjs` holds the thresholds: `blockConfidence` (0.65, how sure
+  Jev must be to block instead of nudge), `graceConfidence` (0.9) and `gracePrompts` (3) for the
+  period after a model switch, and `blockDowngrades`.
 - `jev.config.json` controls what Jev is actually judging — see above.
+- `npm test` runs the unit tests (Node's built-in runner, no dependencies).
 
 ## Known limitations
 
-- **The very first prompt of a session can't be checked reliably.** `SessionStart`'s `model`
-  field isn't always populated (e.g. after `/clear` or a restored session), so until the first
-  real model switch happens, there's nothing to compare against — that one prompt falls back to
-  advisory-only.
-- **Verify `PostModelSwitch` actually fires for your setup.** It's confirmed to fire from the
-  `/model` CLI command. If you're driving Claude Code through an IDE extension's own model
-  picker UI, confirm it fires there too before trusting the block behavior.
+- **The very first prompt of a brand-new session** has no assistant message in the transcript
+  yet, and `SessionStart`'s `model` field isn't always populated, so that one prompt can fall
+  back to advisory-only. Later prompts read the model from the transcript.
+- Right after a model switch, the transcript still shows the old model until Claude replies; the
+  state file written by `PostModelSwitch` covers that gap. `PostModelSwitch` is confirmed to
+  fire from the `/model` CLI command; if you switch via an IDE extension's picker and it doesn't
+  fire, the transcript catches up after one reply.
 - Cost is small but not zero: one Jev call per prompt. At Jev's published rate ($0.042 per
   million input tokens, output free), a typical call (criteria text plus your prompt) runs
   roughly $0.00002–$0.00003 — about 2–3 cents per 1,000 prompts.

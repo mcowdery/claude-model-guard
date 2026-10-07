@@ -23,7 +23,7 @@ async function main() {
   }
   // PostModelSwitch carries `to_model`; SessionStart carries `model` (and only sometimes).
   const modelId = input?.to_model ?? input?.model;
-  writeCurrentModel(input, modelId);
+  writeCurrentModel(input, modelId, { fromSwitch: input?.to_model !== undefined });
 }
 
 main().catch(() => {});
