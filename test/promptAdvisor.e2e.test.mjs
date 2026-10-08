@@ -38,6 +38,8 @@ function session(currentModel = 'claude-haiku-5-5') {
         ...process.env,
         CLAUDE_PROJECT_DIR: project,
         TYPESAFE_API_KEY: 'test',
+        // Never read the developer's real ~/.claude/.env.jev during tests.
+        JEV_USER_ENV_FILE: path.join(root, 'no-such-user.env'),
         STUB_CHOICE: choice,
         STUB_CONF: String(conf),
         STUB_OUT: out,
