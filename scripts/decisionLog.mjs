@@ -4,6 +4,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const PROMPT_CHARS = 120;
+export const MAX_LOG_BYTES = 1024 * 1024;
+
+// Keep one previous generation (.1) so the log never grows past about 2x MAX_LOG_BYTES.
+export function rotateIfLarge(file, max = MAX_LOG_BYTES) {
+  try {
+    if (fs.statSync(file).size < max) return;
+    fs.renameSync(file, `${file}.1`);
+  } catch {
+    // No file yet, or rotation failed: just keep appending.
+  }
+}
 
 export function logDecision(projectDir, record) {
   if (process.env.CLAUDE_GUARD_LOG === '0' || !projectDir) return;
@@ -15,7 +26,9 @@ export function logDecision(projectDir, record) {
       ...record,
       prompt: record.prompt?.replace(/\s+/g, ' ').slice(0, PROMPT_CHARS),
     });
-    fs.appendFileSync(path.join(dir, 'model-guard.log.jsonl'), line + '\n');
+    const file = path.join(dir, 'model-guard.log.jsonl');
+    rotateIfLarge(file);
+    fs.appendFileSync(file, line + '\n');
   } catch {
     // Logging must never affect the prompt.
   }

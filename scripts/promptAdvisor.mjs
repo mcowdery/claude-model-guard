@@ -14,9 +14,9 @@
 // anywhere in the prompt, to bypass for one prompt.
 import fs from 'node:fs';
 import { pickTier, rankedProbabilities } from './jev.mjs';
-import { bumpPromptCount, resolveCurrent } from './modelState.mjs';
+import { recordScored, resolveCurrent } from './modelState.mjs';
 import { classifyPrompt } from './promptFilter.mjs';
-import { decide } from './decision.mjs';
+import { decide, shouldNudge } from './decision.mjs';
 import { logDecision } from './decisionLog.mjs';
 
 const TIMEOUT_MS = 2500;
@@ -77,16 +77,29 @@ async function main() {
   const pct = Math.round(answer.confidence * 100);
   const ranked = rankedProbabilities(answer);
 
+  const opts = { blockDowngrades: process.env.CLAUDE_GUARD_BLOCK_DOWNGRADES === '1' };
   const verdict = decide({
     currentTier: current.tier,
     choice: answer.choice,
     confidence: answer.confidence,
     promptsSinceSwitch: current.promptsSinceSwitch,
-  }, { blockDowngrades: process.env.CLAUDE_GUARD_BLOCK_DOWNGRADES === '1' });
+    history: current.history,
+  }, opts);
 
-  bumpPromptCount(input);
+  // A nudge that is low-confidence or too soon after the last one is dropped, not sent.
+  const suppressed =
+    verdict.action === 'nudge' &&
+    !shouldNudge({ confidence: answer.confidence, history: current.history }, opts);
+  const action = suppressed ? 'nudge-suppressed' : verdict.action;
+
+  recordScored(input, {
+    nudged: action === 'nudge',
+    choice: answer.choice,
+    confidence: answer.confidence,
+  });
   log({
-    action: verdict.action,
+    action,
+    reason: verdict.reason,
     kind: verdict.kind,
     choice: answer.choice,
     confidence: Number(answer.confidence.toFixed(3)),
@@ -94,7 +107,7 @@ async function main() {
     sinceSwitch: current.promptsSinceSwitch,
   });
 
-  if (verdict.action === 'none') return; // Confirmed match - stay quiet.
+  if (action === 'none' || action === 'nudge-suppressed') return; // Match, sticky, or throttled.
 
   if (verdict.action === 'block') {
     process.stdout.write(

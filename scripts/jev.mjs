@@ -51,15 +51,39 @@ export function config() {
   return { apiKey: get('TYPESAFE_API_KEY', '') };
 }
 
-/** Project-specific criteria from ./jev.config.json if present, else the generic defaults. */
-export function loadCriteria() {
+export const DEFAULT_INSTRUCTIONS = 'Which Claude model tier best fits the task described in state?';
+
+/**
+ * Project-specific settings from ./jev.config.json if present, else the generic defaults.
+ * Two shapes are accepted: the original flat `{ tier: description, ... }`, or
+ * `{ "instructions": "...", "criteria": { tier: description, ... } }` to also tell Jev what kind
+ * of codebase this is.
+ * @returns {{instructions: string, criteria: Record<string, string>}}
+ */
+export function loadJevConfig() {
   const file = criteriaFile();
-  if (!fs.existsSync(file)) return DEFAULT_CRITERIA;
+  if (!fs.existsSync(file)) return { instructions: DEFAULT_INSTRUCTIONS, criteria: DEFAULT_CRITERIA };
+  let parsed;
   try {
-    return JSON.parse(fs.readFileSync(file, 'utf8'));
+    parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
   } catch (err) {
     throw new Error(`Couldn't parse ${file} as JSON: ${err.message}`);
   }
+  if (parsed && typeof parsed.criteria === 'object' && parsed.criteria) {
+    return {
+      instructions:
+        typeof parsed.instructions === 'string' && parsed.instructions.trim()
+          ? parsed.instructions
+          : DEFAULT_INSTRUCTIONS,
+      criteria: parsed.criteria,
+    };
+  }
+  return { instructions: DEFAULT_INSTRUCTIONS, criteria: parsed };
+}
+
+/** Kept for callers that only want the tier descriptions. */
+export function loadCriteria() {
+  return loadJevConfig().criteria;
 }
 
 /** @returns {Promise<{type: string, choice: string, confidence: number, probabilities: Record<string, number>}>} */
@@ -70,6 +94,7 @@ export async function pickTier(taskText, { timeoutMs } = {}) {
       'No TYPESAFE_API_KEY. Set it in the environment or in .env.jev (git-ignored; see .env.jev.example).',
     );
   }
+  const { instructions, criteria } = loadJevConfig();
   const res = await fetch('https://api.typesafe.ai/v1/systemone', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -79,8 +104,8 @@ export async function pickTier(taskText, { timeoutMs } = {}) {
       questions: {
         model_tier: {
           type: 'choice',
-          instructions: 'Which Claude model tier best fits the task described in state?',
-          criteria: loadCriteria(),
+          instructions,
+          criteria,
         },
       },
     }),

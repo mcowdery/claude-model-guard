@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveCurrent, tierOf, writeCurrentModel, bumpPromptCount } from '../scripts/modelState.mjs';
+import { resolveCurrent, tierOf, writeCurrentModel, recordScored } from '../scripts/modelState.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'mg-'));
 const asst = (model, ts, text = 'ok', extra = {}) =>
@@ -53,7 +53,7 @@ test('grace counter only exists after a real switch and counts up', () => {
   assert.equal(resolveCurrent(input).promptsSinceSwitch, null);
   writeCurrentModel(input, 'claude-sonnet-5-5', { fromSwitch: true });
   assert.equal(resolveCurrent(input).promptsSinceSwitch, 0);
-  bumpPromptCount(input);
+  recordScored(input);
   assert.equal(resolveCurrent(input).promptsSinceSwitch, 1);
 });
 

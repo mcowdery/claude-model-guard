@@ -30,6 +30,10 @@ commands (`/model`, `/clear`, ...), `!` shell commands, and bare replies like "c
 short follow-ups ("fix that too") are scored together with Claude's previous message, or skipped
 if there isn't one. Long prompts are clipped and pasted blobs shrunk so logs don't drown the ask.
 
+To keep it quiet, nudges are only sent at 80%+ confidence and at most once per 5 scored
+prompts, and a softer-sounding follow-up inside a task that was just judged hard (the last 3
+prompts) isn't reported as a downgrade.
+
 The running model is read from the session transcript (every assistant message records its
 model) and the switch-tracking state file, whichever is newer. For the first few prompts after
 you switch models the block threshold is raised (0.9 instead of 0.65) so a switch isn't
@@ -88,9 +92,11 @@ Then, in your project:
    ```
 
 3. **(Optional) Customize the criteria.** Copy `jev.config.example.json` to `jev.config.json` at
-   your project's root and rewrite the descriptions to fit your own codebase and judgment calls.
-   The keys are exactly the model tiers Jev is asked to choose between — add, remove, or rename
-   them freely (whatever's there is what the hooks compare against). Without this file, generic
+   your project's root. `instructions` tells Jev what kind of codebase this is; `criteria`
+   holds the per-tier descriptions — rewrite them to fit your own work and judgment calls. The
+   criteria keys are exactly the model tiers Jev is asked to choose between — add, remove, or
+   rename them freely (whatever's there is what the hooks compare against). A flat
+   `{ "haiku": "...", ... }` file (the 1.0 format) still works. Without this file, generic
    defaults are used.
 
 That's it — no npm install, no dependency, just Node's built-in `fetch`.
@@ -120,11 +126,16 @@ If the guard ever blocks something you want to run anyway:
 
 - Every decision (including skips) is appended to `.claude/model-guard.log.jsonl` in the
   project: when, the first 120 chars of the prompt, Jev's pick and confidence, the running tier,
-  and what the hook did. Add it to your `.gitignore` (it contains prompt text), and review it
-  before changing thresholds. Set `CLAUDE_GUARD_LOG=0` to turn it off.
+  and what the hook did (`block`, `nudge`, `nudge-suppressed`, `none`, `skip`; `reason` says
+  why, e.g. `sticky`). It rotates at 1 MB, keeping one `.1` generation. Add
+  `.claude/model-guard.log.jsonl*` to your `.gitignore` (it contains prompt text), and review it
+  before changing thresholds. Set `CLAUDE_GUARD_LOG=0` to turn it off. If `currentTier` is
+  `null` or `sinceSwitch` stays `null` after you switch models, the hook isn't receiving the
+  data it expects.
 - `DEFAULTS` in `scripts/decision.mjs` holds the thresholds: `blockConfidence` (0.65, how sure
   Jev must be to block instead of nudge), `graceConfidence` (0.9) and `gracePrompts` (3) for the
-  period after a model switch, and `blockDowngrades`.
+  period after a model switch, `blockDowngrades`, `nudgeConfidence` (0.8) and `nudgeEvery` (5),
+  and `stickyPrompts` (3) / `stickyOverride` (0.9).
 - `jev.config.json` controls what Jev is actually judging — see above.
 - `npm test` runs the unit tests (Node's built-in runner, no dependencies).
 

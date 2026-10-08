@@ -1,4 +1,4 @@
 node_modules/
 .env.jev
 jev.config.json
-model-guard.log.jsonl
+model-guard.log.jsonl*

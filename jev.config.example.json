@@ -1,6 +1,9 @@
 {
-  "haiku": "A purely mechanical task with one unambiguous correct edit: a single-line tweak, a well-specified one-line fix, a lookup/grep/summary whose answer is trivial to verify. No design judgment, no multi-file reasoning.",
-  "sonnet": "Normal day-to-day software work: a new feature of ordinary scope, a bug fix, dev tooling, refactoring, documentation. The default for anything that isn't clearly at the Haiku or Opus extreme.",
-  "opus": "High-stakes or deep-reasoning work: debugging subtle concurrency or algorithmic issues, a single change that touches many files or systems at once, or an irreversible architectural or design judgment call.",
-  "fable": "Long-form creative or narrative writing with little logic: documentation prose, marketing copy, long-form explanations where voice and writing quality matter more than code correctness."
+  "instructions": "Which Claude model tier best fits the task described in state, for a Claude Code session in <describe your codebase, e.g. a game-dev codebase>?",
+  "criteria": {
+    "haiku": "A purely mechanical task with one unambiguous correct edit: a single-line tweak, a well-specified one-line fix, a lookup/grep/summary whose answer is trivial to verify. No design judgment, no multi-file reasoning.",
+    "sonnet": "Normal day-to-day software work: a new feature of ordinary scope, a bug fix, dev tooling, refactoring, documentation. The default for anything that isn't clearly at the Haiku or Opus extreme.",
+    "opus": "High-stakes or deep-reasoning work: debugging subtle concurrency or algorithmic issues, a single change that touches many files or systems at once, or an irreversible architectural or design judgment call.",
+    "fable": "Long-form creative or narrative writing with little logic: documentation prose, marketing copy, long-form explanations where voice and writing quality matter more than code correctness."
+  }
 }

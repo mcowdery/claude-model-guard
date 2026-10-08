@@ -50,24 +50,38 @@ export function writeCurrentModel(input, modelId, { fromSwitch = false } = {}) {
   const file = statePath(input);
   if (!file || !modelId) return;
   try {
+    // A fresh model means fresh counters: nudge throttling and sticky scoring start over.
     fs.writeFileSync(
       file,
-      JSON.stringify({ modelId, at: Date.now(), fromSwitch, promptsSinceSwitch: 0 }),
+      JSON.stringify({ modelId, at: Date.now(), fromSwitch, promptsSinceSwitch: 0, promptCount: 0 }),
     );
   } catch {
     // Best-effort only - a failed write just means the next prompt falls back to the transcript.
   }
 }
 
-/** Count a scored prompt against the post-switch grace period. */
-export function bumpPromptCount(input) {
-  const state = readState(input);
+/**
+ * Record that a prompt was scored: advances the counters used for the post-switch grace period,
+ * nudge throttling and sticky scoring. Works even before any model has been recorded.
+ * @param {{nudged?: boolean, choice?: string, confidence?: number}} result
+ */
+export function recordScored(input, { nudged = false, choice, confidence } = {}) {
   const file = statePath(input);
-  if (!state || !file) return;
+  if (!file) return;
+  const state = readState(input) ?? {};
+  const promptCount = (state.promptCount ?? 0) + 1;
   try {
     fs.writeFileSync(
       file,
-      JSON.stringify({ ...state, promptsSinceSwitch: (state.promptsSinceSwitch ?? 0) + 1 }),
+      JSON.stringify({
+        ...state,
+        promptCount,
+        promptsSinceSwitch: (state.promptsSinceSwitch ?? 0) + 1,
+        lastNudgeAt: nudged ? promptCount : (state.lastNudgeAt ?? null),
+        lastChoice: choice ?? state.lastChoice ?? null,
+        lastChoiceConfidence: confidence ?? state.lastChoiceConfidence ?? null,
+        lastChoiceAt: choice ? promptCount : (state.lastChoiceAt ?? null),
+      }),
     );
   } catch {
     // Best-effort.
@@ -132,8 +146,11 @@ export function readTranscriptInfo(input) {
 
 /**
  * Best guess at the running tier: the newer of the state file and the transcript.
- * @returns {{tier: string|null, lastText: string, promptsSinceSwitch: number|null}}
+ * @returns {{tier: string|null, lastText: string, promptsSinceSwitch: number|null,
+ *   history: {promptCount: number, lastNudgeAt: number|null, lastChoice: string|null,
+ *   lastChoiceAt: number|null}}}
  *   promptsSinceSwitch is non-null only while the state file's last event was a real switch.
+ *   history is the per-session scoring record (zeros/nulls when there is no state file).
  */
 export function resolveCurrent(input) {
   const state = readState(input);
@@ -145,5 +162,11 @@ export function resolveCurrent(input) {
   else tier = stateTier ?? transcript.tier;
 
   const sinceSwitch = state?.fromSwitch && stateTier === tier ? (state.promptsSinceSwitch ?? 0) : null;
-  return { tier, lastText: transcript.lastText, promptsSinceSwitch: sinceSwitch };
+  const history = {
+    promptCount: state?.promptCount ?? 0,
+    lastNudgeAt: state?.lastNudgeAt ?? null,
+    lastChoice: state?.lastChoice ?? null,
+    lastChoiceAt: state?.lastChoiceAt ?? null,
+  };
+  return { tier, lastText: transcript.lastText, promptsSinceSwitch: sinceSwitch, history };
 }
