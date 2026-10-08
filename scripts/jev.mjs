@@ -5,6 +5,7 @@
 // of labeled options, and it returns one of them with a confidence and a probability per
 // option. See https://typesafe.ai (early access / waitlist as of this writing).
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 // Generic defaults, meant to be overridden per project - see jev.config.example.json.
@@ -37,17 +38,30 @@ function criteriaFile() {
   return process.env.JEV_CRITERIA_FILE || path.join(process.cwd(), 'jev.config.json');
 }
 
-// Settings from the environment, then .env.jev (KEY=value lines, git-ignored), then defaults.
-export function config() {
-  const file = envFile();
-  const fromFile = {};
-  if (fs.existsSync(file)) {
+// User-level fallback so one key serves every project: ~/.claude/.env.jev (same format).
+function userEnvFile() {
+  return process.env.JEV_USER_ENV_FILE || path.join(os.homedir(), '.claude', '.env.jev');
+}
+
+function parseEnvFile(file) {
+  const out = {};
+  try {
+    if (!fs.existsSync(file)) return out;
     for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
-      if (m && !line.trimStart().startsWith('#')) fromFile[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      if (m && !line.trimStart().startsWith('#')) out[m[1]] = m[2].replace(/^["']|["']$/g, '');
     }
+  } catch {
+    // Unreadable file: treat as absent.
   }
-  const get = (k, d) => process.env[k] ?? fromFile[k] ?? d;
+  return out;
+}
+
+// Settings from the environment, then the project's .env.jev, then ~/.claude/.env.jev.
+export function config() {
+  const project = parseEnvFile(envFile());
+  const user = parseEnvFile(userEnvFile());
+  const get = (k, d) => process.env[k] || project[k] || user[k] || d;
   return { apiKey: get('TYPESAFE_API_KEY', '') };
 }
 
@@ -86,36 +100,65 @@ export function loadCriteria() {
   return loadJevConfig().criteria;
 }
 
-/** @returns {Promise<{type: string, choice: string, confidence: number, probabilities: Record<string, number>}>} */
-export async function pickTier(taskText, { timeoutMs } = {}) {
+// Second question, asked in the same request as the tier question (Jev evaluates questions in
+// parallel, so it barely adds latency). It flags prompts whose work is mostly many small
+// classify / rank / triage judgments, which a Jev tool can do for a fraction of the tokens.
+export const BULK_QUESTION = {
+  type: 'choice',
+  instructions:
+    'Does the task described in state mostly consist of making the same simple judgment about ' +
+    'many separate items?',
+  criteria: {
+    bulk:
+      'Dozens or more items (log lines, files, issues, test failures, search results, diffs, ' +
+      'records) each need a short label, score, ranking or keep/discard decision, e.g. triage ' +
+      'every failing test, rank candidate files by relevance, label all open issues.',
+    other:
+      'Anything else: writing or changing code, explaining, designing, debugging one problem, ' +
+      'or a judgment about a single item or a handful of items.',
+  },
+};
+
+async function callJev(taskText, questions, timeoutMs) {
   const { apiKey } = config();
   if (!apiKey) {
     throw new Error(
       'No TYPESAFE_API_KEY. Set it in the environment or in .env.jev (git-ignored; see .env.jev.example).',
     );
   }
-  const { instructions, criteria } = loadJevConfig();
   const res = await fetch('https://api.typesafe.ai/v1/systemone', {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      state: taskText,
-      model: 'jev-latest',
-      questions: {
-        model_tier: {
-          type: 'choice',
-          instructions,
-          criteria,
-        },
-      },
-    }),
+    body: JSON.stringify({ state: taskText, model: 'jev-latest', questions }),
     signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined,
   });
   if (!res.ok) {
-    throw new Error(`Jev request failed: ${res.status} ${res.statusText}\n${await res.text()}`);
+    throw new Error(`Jev request failed: ${res.status} ${res.statusText}
+${await res.text()}`);
   }
-  const body = await res.json();
-  return body.answers.model_tier;
+  return (await res.json()).answers;
+}
+
+function tierQuestion() {
+  const { instructions, criteria } = loadJevConfig();
+  return { type: 'choice', instructions, criteria };
+}
+
+/**
+ * One request, two questions: which model tier fits, and (when `bulk` is true) whether the task
+ * is bulk classification work. `bulk` in the result is null if Jev didn't return that answer.
+ * @returns {Promise<{tier: object, bulk: object|null}>}
+ */
+export async function askJev(taskText, { timeoutMs, bulk = true } = {}) {
+  const questions = { model_tier: tierQuestion() };
+  if (bulk) questions.bulk_work = BULK_QUESTION;
+  const answers = await callJev(taskText, questions, timeoutMs);
+  return { tier: answers.model_tier, bulk: bulk ? (answers.bulk_work ?? null) : null };
+}
+
+/** @returns {Promise<{type: string, choice: string, confidence: number, probabilities: Record<string, number>}>} */
+export async function pickTier(taskText, { timeoutMs } = {}) {
+  return (await askJev(taskText, { timeoutMs, bulk: false })).tier;
 }
 
 export function rankedProbabilities(answer) {

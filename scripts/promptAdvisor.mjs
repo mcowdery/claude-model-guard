@@ -6,6 +6,9 @@
 // - If the two already agree, it says nothing.
 // - Downgrades, unranked tiers (fable), unknown current model, or a mismatch too close to call
 //   only add advisory context for Claude to mention if relevant.
+// - The same Jev request also asks whether the prompt is bulk classification work; if so (and
+//   Jev is confident) a hint is added telling Claude to use a Jev tool if it has one. Turn off
+//   with CLAUDE_GUARD_BULK=0. It never blocks, and rides along with or without a tier nudge.
 // - Notifications, slash commands, bare "continue" replies are never scored (promptFilter.mjs).
 //
 // Must never block or slow down a prompt on its own account: any failure (no API key, network
@@ -13,10 +16,10 @@
 // exactly as if it weren't installed. Set CLAUDE_SKIP_MODEL_GUARD=1, or put [[skip-guard]]
 // anywhere in the prompt, to bypass for one prompt.
 import fs from 'node:fs';
-import { pickTier, rankedProbabilities } from './jev.mjs';
+import { askJev, rankedProbabilities } from './jev.mjs';
 import { recordScored, resolveCurrent } from './modelState.mjs';
 import { classifyPrompt } from './promptFilter.mjs';
-import { decide, shouldNudge } from './decision.mjs';
+import { decide, shouldNudge, shouldHintBulk, bulkHintText } from './decision.mjs';
 import { logDecision } from './decisionLog.mjs';
 
 const TIMEOUT_MS = 2500;
@@ -73,7 +76,11 @@ async function main() {
     state = `Previous assistant message (excerpt):\n${current.lastText}\n\nUser's reply:\n${filtered.text}`;
   }
 
-  const answer = await pickTier(state, { timeoutMs: TIMEOUT_MS });
+  const { tier: answer, bulk } = await askJev(state, {
+    timeoutMs: TIMEOUT_MS,
+    bulk: process.env.CLAUDE_GUARD_BULK !== '0',
+  });
+  const hintBulk = shouldHintBulk(bulk);
   const pct = Math.round(answer.confidence * 100);
   const ranked = rankedProbabilities(answer);
 
@@ -105,9 +112,21 @@ async function main() {
     confidence: Number(answer.confidence.toFixed(3)),
     currentTier: current.tier,
     sinceSwitch: current.promptsSinceSwitch,
+    bulk: bulk ? bulk.choice : undefined,
+    bulkConfidence: bulk ? Number(bulk.confidence.toFixed(3)) : undefined,
+    bulkHint: hintBulk || undefined,
   });
 
-  if (action === 'none' || action === 'nudge-suppressed') return; // Match, sticky, or throttled.
+  const emit = (additionalContext) =>
+    process.stdout.write(
+      JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext } }),
+    );
+
+  if (action === 'none' || action === 'nudge-suppressed') {
+    // Match, sticky, or throttled: no tier message, but a bulk hint is independent of that.
+    if (hintBulk) emit(bulkHintText(bulk));
+    return;
+  }
 
   if (verdict.action === 'block') {
     process.stdout.write(
@@ -128,11 +147,7 @@ async function main() {
     `Jev model-tier suggestion for this prompt: ${answer.choice} (confidence ${pct}%; ${ranked}). ` +
     'If this tier clearly differs from the model you are currently running as, say so to the ' +
     'user in one short line before the rest of your response; otherwise say nothing about it.';
-  process.stdout.write(
-    JSON.stringify({
-      hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: context },
-    }),
-  );
+  emit(hintBulk ? `${context}\n\n${bulkHintText(bulk)}` : context);
 }
 
 main().catch(() => {}); // Jev unavailable/unconfigured/timed out: fail silent, never block.

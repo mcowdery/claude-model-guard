@@ -63,3 +63,23 @@ export function shouldNudge({ confidence, history }, opts = {}) {
   if (!history || history.lastNudgeAt === null || history.lastNudgeAt === undefined) return true;
   return history.promptCount + 1 - history.lastNudgeAt >= o.nudgeEvery;
 }
+
+// Bulk-work hint: when most of a task is the same small judgment over many items, a Jev tool
+// (e.g. an MCP server exposing jev_decide / jev_rank) beats spending model tokens item by item.
+export const BULK_CONFIDENCE = 0.8;
+
+/** Whether Jev's answer to the bulk question is confident enough to mention to Claude. */
+export function shouldHintBulk(bulk, opts = {}) {
+  if (!bulk || bulk.choice !== 'bulk') return false;
+  return bulk.confidence >= (opts.bulkConfidence ?? BULK_CONFIDENCE);
+}
+
+export function bulkHintText(bulk) {
+  return (
+    `Jev also flags this prompt as bulk classification work (confidence ${Math.round(bulk.confidence * 100)}%): ` +
+    'many separate items each needing a short label, score, ranking or keep/discard call. If a Jev ' +
+    'tool is available in this session (an MCP tool such as jev_decide, jev_rank or jev_evaluate), ' +
+    'send the items to it in batches instead of judging each one yourself, then act on its answers ' +
+    'and review the low-confidence ones. If no such tool is available, ignore this and do not mention it.'
+  );
+}

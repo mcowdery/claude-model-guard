@@ -73,3 +73,40 @@ test('jev config: defaults, flat legacy file, and instructions+criteria file', (
     delete process.env.JEV_CRITERIA_FILE;
   }
 });
+
+import { shouldHintBulk, bulkHintText } from '../scripts/decision.mjs';
+
+test('bulk hint needs a confident "bulk" answer', () => {
+  assert.equal(shouldHintBulk({ choice: 'bulk', confidence: 0.8 }), true);
+  assert.equal(shouldHintBulk({ choice: 'bulk', confidence: 0.79 }), false);
+  assert.equal(shouldHintBulk({ choice: 'other', confidence: 0.99 }), false);
+  assert.equal(shouldHintBulk(null), false);
+  assert.equal(shouldHintBulk({ choice: 'bulk', confidence: 0.7 }, { bulkConfidence: 0.6 }), true);
+});
+
+test('bulk hint tells Claude to ignore it when no Jev tool exists', () => {
+  assert.match(bulkHintText({ confidence: 0.9 }), /90%.*ignore this and do not mention it/s);
+});
+
+import { config } from '../scripts/jev.mjs';
+
+test('API key falls back from env, to project .env.jev, to the user-level file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mg-key-'));
+  const proj = path.join(dir, 'proj.env');
+  const user = path.join(dir, 'user.env');
+  const saved = { ...process.env };
+  try {
+    delete process.env.TYPESAFE_API_KEY;
+    process.env.JEV_ENV_FILE = proj;
+    process.env.JEV_USER_ENV_FILE = user;
+    assert.equal(config().apiKey, '');
+    fs.writeFileSync(user, 'TYPESAFE_API_KEY=user-key\n');
+    assert.equal(config().apiKey, 'user-key');
+    fs.writeFileSync(proj, '# c\nTYPESAFE_API_KEY="proj-key"\n');
+    assert.equal(config().apiKey, 'proj-key');
+    process.env.TYPESAFE_API_KEY = 'env-key';
+    assert.equal(config().apiKey, 'env-key');
+  } finally {
+    process.env = saved;
+  }
+});

@@ -129,3 +129,48 @@ test('no API key fails open', () => {
   const s = session('claude-haiku-5-5');
   assert.equal(s.submit('refactor the auth module across all services', 'opus', 0.9, { TYPESAFE_API_KEY: '' }), null);
 });
+
+// --- bulk classification hint -------------------------------------------------------------
+
+const BULK_ENV = { STUB_BULK: 'bulk', STUB_BULK_CONF: '0.92' };
+
+test('bulk work adds a hint even when the tier matches', () => {
+  const s = session('claude-sonnet-5-5');
+  const r = s.submit('label every one of the 400 open issues by severity', 'sonnet', 0.9, BULK_ENV);
+  const ctx = r.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /bulk classification/);
+  assert.doesNotMatch(ctx, /model-tier suggestion/);
+  assert.equal(s.log().at(-1).bulkHint, true);
+});
+
+test('bulk hint is appended to a tier nudge', () => {
+  const s = session('claude-opus-5-5');
+  const r = s.submit('label every one of the 400 open issues by severity', 'sonnet', 0.9, BULK_ENV);
+  const ctx = r.hookSpecificOutput.additionalContext;
+  assert.match(ctx, /model-tier suggestion/);
+  assert.match(ctx, /bulk classification/);
+});
+
+test('a block does not carry the bulk hint', () => {
+  const s = session('claude-haiku-5-5');
+  const r = s.submit('rank all files by how risky they are to change', 'opus', 0.9, BULK_ENV);
+  assert.equal(r.decision, 'block');
+  assert.doesNotMatch(r.reason, /bulk/);
+});
+
+test('low-confidence or non-bulk answers stay quiet', () => {
+  const s = session('claude-sonnet-5-5');
+  assert.equal(s.submit('rename this variable', 'sonnet', 0.9, { STUB_BULK: 'other' }), null);
+  assert.equal(s.submit('triage the failing tests', 'sonnet', 0.9, { STUB_BULK: 'bulk', STUB_BULK_CONF: '0.6' }), null);
+  assert.equal(s.submit('triage the failing tests', 'sonnet', 0.9), null); // Jev returned no bulk answer
+});
+
+test('both questions go out in one request, and CLAUDE_GUARD_BULK=0 drops the second', () => {
+  const s = session('claude-sonnet-5-5');
+  s.submit('label every one of the 400 open issues by severity', 'sonnet', 0.9, BULK_ENV);
+  assert.deepEqual(Object.keys(s.jevRequest().questions), ['model_tier', 'bulk_work']);
+
+  const r = s.submit('label every one of the 400 open issues by severity', 'sonnet', 0.9, { ...BULK_ENV, CLAUDE_GUARD_BULK: '0' });
+  assert.equal(r, null);
+  assert.deepEqual(Object.keys(s.jevRequest().questions), ['model_tier']);
+});

@@ -69,7 +69,8 @@ project install, or the hooks run twice. Your project still supplies its own `.e
 Then, in your project:
 
 1. **Add your API key.** Copy `.env.jev.example` to `.env.jev` at your project's root and fill
-   in `TYPESAFE_API_KEY`. `.env.jev` is meant to be git-ignored — don't commit it.
+   in `TYPESAFE_API_KEY`. To use one key everywhere, put the same line in `~/.claude/.env.jev` instead (the project file and
+   the `TYPESAFE_API_KEY` environment variable take precedence). `.env.jev` is meant to be git-ignored — don't commit it.
 
 2. **Register the hooks** — `install.mjs` above does this. To do it by hand instead, add this
    to `.claude/settings.json` (shared with your team) or `.claude/settings.local.json`
@@ -100,6 +101,19 @@ Then, in your project:
    defaults are used.
 
 That's it — no npm install, no dependency, just Node's built-in `fetch`.
+
+## Bulk-work hint (optional Jev tool)
+
+Claude calling Jev as a tool costs an extra model turn, so it only pays for work with many items
+(say 30+ log lines, issues or failing tests), where Claude would otherwise judge each one itself.
+The hook asks Jev about that in the same request as the tier question. If it is 80%+ sure the
+prompt is that kind of work, it tells Claude to send the items, in batches, to a Jev tool if one is
+available. Without such a tool the note says to ignore it.
+
+The hook does not provide the tool. Register a community MCP server, for example
+[jev-mcp](https://github.com/minhgv/jev-mcp) or
+[jev-decision-mcp](https://github.com/amidabuddha/jev-decision-mcp), with `claude mcp add`. Neither
+has been tested with Claude Code here. Set `CLAUDE_GUARD_BULK=0` to turn the hint off.
 
 ## Using the CLI picker
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.2.0
+
+Added
+- Bulk-work hint: the per-prompt Jev request now carries a second question, "is this mostly the
+  same simple judgment over many items?" (labelling issues, ranking files, triaging failures).
+  When Jev is 80%+ sure, the hook adds a note telling Claude to batch those items through a Jev
+  MCP tool (for example `jev_decide`, `jev_rank`, `jev_evaluate`) if one is available, and to
+  ignore the note otherwise. It never blocks and is independent of the model-tier decision.
+  `CLAUDE_GUARD_BULK=0` turns it off. The decision log records `bulk`, `bulkConfidence` and
+  `bulkHint`.
+- The Typesafe key is also read from `~/.claude/.env.jev` (after the environment and the project's
+  `.env.jev`), so one key serves every project with a global install.
+- `askJev()` in `scripts/jev.mjs` sends both questions in one request; `pickTier()` is unchanged.
+
 ## 1.1.0
 
 Fixes

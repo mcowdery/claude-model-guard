@@ -1,6 +1,6 @@
 {
   "name": "claude-model-guard",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Pick, and optionally enforce, the right Claude Code model tier per prompt using Jev (a cheap classifier model) instead of guessing yourself.",
   "license": "MIT",
   "type": "module",
