@@ -11,6 +11,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const HOOK = path.join(HERE, '..', 'scripts', 'promptAdvisor.mjs');
 const STUB = pathToFileURL(path.join(HERE, 'helpers', 'stubFetch.mjs')).href;
+// The developer's own guard settings (e.g. CLAUDE_GUARD_BLOCK_DOWNGRADES) must not leak into
+// the tests, which pin each behaviour explicitly.
+const INHERITED_ENV = Object.fromEntries(
+  Object.entries(process.env).filter(([k]) => !/^CLAUDE_(GUARD_|SKIP_MODEL_GUARD)/.test(k)),
+);
 
 function session(currentModel = 'claude-haiku-5-5') {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mg-e2e-'));
@@ -35,7 +40,7 @@ function session(currentModel = 'claude-haiku-5-5') {
       input: JSON.stringify(input),
       encoding: 'utf8',
       env: {
-        ...process.env,
+        ...INHERITED_ENV,
         CLAUDE_PROJECT_DIR: project,
         TYPESAFE_API_KEY: 'test',
         // Never read the developer's real ~/.claude/.env.jev during tests.
