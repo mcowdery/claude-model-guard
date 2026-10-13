@@ -129,6 +129,13 @@ test('project instructions and criteria from jev.config.json reach Jev', () => {
 test('skip phrase and env bypass skip everything', () => {
   const s = session('claude-haiku-5-5');
   assert.equal(s.submit('refactor everything [[skip-guard]]', 'opus'), null);
+  assert.equal(s.submit('refactor everything --skip-guard', 'opus'), null);
+  assert.equal(s.submit('refactor everything --skip-guard  ', 'opus'), null);
+  assert.equal(s.submit('--skip-guard refactor everything', 'opus'), null);
+  assert.equal(s.submit('  --skip-guard refactor everything', 'opus'), null);
+  // Only at the start or end: mentioning the flag mid-prompt must not skip.
+  assert.notEqual(s.submit('explain what --skip-guard does in this repo', 'opus'), null);
+  assert.notEqual(s.submit('refactor everything x--skip-guard', 'opus'), null);
   assert.equal(s.submit('refactor everything now please', 'opus', 0.9, { CLAUDE_SKIP_MODEL_GUARD: '1' }), null);
 });
 

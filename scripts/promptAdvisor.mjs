@@ -13,8 +13,8 @@
 //
 // Must never block or slow down a prompt on its own account: any failure (no API key, network
 // error, Jev slow, state file unreadable) is swallowed and the hook exits 0 with no output,
-// exactly as if it weren't installed. Set CLAUDE_SKIP_MODEL_GUARD=1, or put [[skip-guard]]
-// anywhere in the prompt, to bypass for one prompt.
+// exactly as if it weren't installed. Set CLAUDE_SKIP_MODEL_GUARD=1, start or end the prompt
+// with --skip-guard, or put [[skip-guard]] anywhere in it, to bypass for one prompt.
 import fs from 'node:fs';
 import { askJev, rankedProbabilities } from './jev.mjs';
 import { recordScored, resolveCurrent } from './modelState.mjs';
@@ -25,8 +25,10 @@ import { logDecision } from './decisionLog.mjs';
 const TIMEOUT_MS = 2500;
 // Typed into the prompt itself to skip the guard for just that one prompt - stays in the
 // transcript (hooks can't rewrite the prompt text), but that's a small price for not needing
-// a separate terminal/env var mid-flow.
-const SKIP_PHRASE = /\[\[skip-guard\]\]/i;
+// a separate terminal/env var mid-flow. `--skip-guard` only counts as the first or last thing in
+// the prompt, so one that merely mentions the flag mid-sentence doesn't skip; `[[skip-guard]]`
+// still works anywhere.
+const SKIP_PHRASE = /\[\[skip-guard\]\]|^\s*--skip-guard(?:\s|$)|(?:^|\s)--skip-guard\s*$/i;
 
 function readStdin() {
   return new Promise((resolve) => {

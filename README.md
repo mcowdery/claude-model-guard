@@ -133,7 +133,8 @@ If the guard ever blocks something you want to run anyway:
 
 - Switch to the suggested model and resubmit (the intended path).
 - Set `CLAUDE_SKIP_MODEL_GUARD=1` in your environment to bypass entirely.
-- Add `[[skip-guard]]` anywhere in the prompt text to bypass just that one prompt (it stays
+- Start or end the prompt with `--skip-guard` (it only counts as the first or last thing typed), or put
+  `[[skip-guard]]` anywhere in the prompt text, to bypass just that one prompt (it stays
   visible in the transcript — hooks can't rewrite what you typed, only react to it).
 
 ## Tuning
