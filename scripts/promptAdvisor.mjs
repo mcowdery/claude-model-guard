@@ -30,6 +30,10 @@ const TIMEOUT_MS = 2500;
 // still works anywhere.
 const SKIP_PHRASE = /\[\[skip-guard\]\]|^\s*--skip-guard(?:\s|$)|(?:^|\s)--skip-guard\s*$/i;
 
+// Messages from other Claude sessions arrive as a prompt wrapped in this tag. They aren't the
+// user's own prompts, so they are never scored or blocked. Only the leading tag counts.
+const CROSS_SESSION_PROMPT = /^\s*<\\?cross-session-message[\s>]/;
+
 function readStdin() {
   return new Promise((resolve) => {
     let data = '';
@@ -63,6 +67,7 @@ async function main() {
   const raw = input?.prompt;
   if (!raw || !raw.trim()) return;
   if (process.env.CLAUDE_SKIP_MODEL_GUARD || SKIP_PHRASE.test(raw)) return;
+  if (CROSS_SESSION_PROMPT.test(raw)) return; // Agent-to-agent message, not the user's own prompt.
   const projectDir = enterProjectDir(input);
   const log = (record) => logDecision(projectDir, { session: input.session_id, prompt: raw, ...record });
 

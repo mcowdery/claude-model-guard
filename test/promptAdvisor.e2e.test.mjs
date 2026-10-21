@@ -139,6 +139,20 @@ test('skip phrase and env bypass skip everything', () => {
   assert.equal(s.submit('refactor everything now please', 'opus', 0.9, { CLAUDE_SKIP_MODEL_GUARD: '1' }), null);
 });
 
+test('cross-session messages pass through; ordinary prompts are still guarded', () => {
+  const s = session('claude-opus-5-5');
+  const msg = '<cross-session-message from="uds:x" from-name="a" from-mode="prompting">\nrename foo to bar\n</cross-session-message>';
+  const blockEnv = { CLAUDE_GUARD_BLOCK_DOWNGRADES: '1' };
+  assert.equal(s.submit(msg, 'haiku', 0.95, blockEnv), null);
+  assert.equal(s.submit(`  ${msg}`, 'haiku', 0.95, blockEnv), null);
+  assert.equal(s.jevCalled(), false);
+  // Only a leading tag counts, and ordinary prompts behave as before.
+  assert.equal(s.submit('rename foo to bar in utils.js', 'haiku', 0.95, blockEnv).decision, 'block');
+  assert.notEqual(s.submit(`see ${msg}`, 'haiku', 0.95, blockEnv), null);
+  const h = session('claude-haiku-5-5');
+  assert.equal(h.submit('refactor the auth module across all services', 'opus').decision, 'block');
+});
+
 test('no API key fails open', () => {
   const s = session('claude-haiku-5-5');
   assert.equal(s.submit('refactor the auth module across all services', 'opus', 0.9, { TYPESAFE_API_KEY: '' }), null);
